@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MPElectroML"
+version = "0.1.0" # Update as you release new versions
+authors = [
+  { name="Ilgar Baghishov", email="baghishov@utexas.edu" },
+]
+description = "Materials Project Electrodes with Machine-Learned Interatomic Potentials for data retrieval, structure modification, and property calculation."
+readme = "README.md"
+requires-python = ">=3.9" # Specify the minimum Python version supported
+license = { file = "LICENSE" }
+keywords = ["materials science", "batteries", "electrodes", "materials project", "machine learning", "interatomic potentials", "fairchem", "pymatgen", "ase"]
+classifiers = [
+    "Development Status :: 3 - Alpha", # Or "4 - Beta", "5 - Production/Stable"
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Materials Science",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "numpy >= 2.0", # Specify versions if known compatibility issues exist
+    "pandas >= 2.0",
+    "ase >= 3.25",
+    "pymatgen >= 2024.8", # Check for recent stable versions
+    "scipy >= 1.11",    # Voronoi interstitial site discovery
+    "mp-api >= 0.45",   # Check for recent stable versions of Materials Project API client
+    "chgnet >= 0.4.0",
+    "fairchem-core >= 2.1",    # Or the specific Fairchem package name if different
+    "tables",           # For HDF5 support in pandas (df.to_hdf, pd.read_hdf with 'table' format)
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest >= 8.0",
+    "pytest-cov >= 6.1", # For coverage reporting
+    "flake8 >= 7.0",      # Or "ruff" for linting
+    # "mock", # If using Python < 3.3 and need mock, else unittest.mock
+]
+dev = [
+    "MPElectroML[test]", # Includes test dependencies
+    "ruff",             # Example: using Ruff for formatting and advanced linting
+    # "black", # Alternative formatter
+    "ipykernel",        # For Jupyter notebook support if used for exploration
+    "twine",            # For uploading packages to PyPI
+    "build",            # For building packages
+    # "sphinx", "sphinx-rtd-theme", # For documentation generation
+]
+docs = [
+    "sphinx >= 8.0",
+    "sphinx-rtd-theme >= 3.0",
+    "myst-parser", # If using MyST Markdown in Sphinx
+    # Add other documentation-related dependencies
+]
+
+
+[project.urls]
+"Homepage" = "https://github.com/IlgarBaghishov/MPElectroML"
+"Repository" = "https://github.com/IlgarBaghishov/MPElectroML"
+"Bug Tracker" = "https://github.com/IlgarBaghishov/MPElectroML/issues"
+# "Documentation" = "https://IlgarBaghishov.github.io/MPElectroML/"
+
+# Example: if you want to create a command-line script entry point
+# [project.scripts]
+# mpelectroml-run = "mpelectroml.cli_module:main_function" # Replace with actual module and function
+
+[tool.setuptools]
+# include-package-data = true # If you have non-code files inside your package to include
+
+[tool.setuptools.packages.find]
+where = ["."] # Root directory where to search for packages
+include = ["mpelectroml*"]  # Include the main package and any sub-packages
+exclude = ["tests*", "examples*", "docs*", "mpelectroml_output*"] # Exclude these from being installed as packages
+
+# Example configuration for Ruff (optional, if you choose to use it over Flake8/Black separately)
+# [tool.ruff]
+# line-length = 119 # Match Black's default or your preference
+# select = [
+#     "E",  # pycodestyle errors
+#     "W",  # pycodestyle warnings
+#     "F",  # Pyflakes
+#     "I",  # isort
+#     "C",  # flake8-comprehensions
+#     "B",  # flake8-bugbear
+#     "UP", # pyupgrade
+# ]
+# ignore = [] # Specific rules to ignore
+
+# [tool.ruff.format]
+# quote-style = "double"
+# indent-style = "space"
+
+# [tool.pytest.ini_options]
+# minversion = "6.0"
+# addopts = "-ra -q --cov=mpelectroml --cov-report=term-missing"
+# testpaths = [
+#     "tests",
+# ]

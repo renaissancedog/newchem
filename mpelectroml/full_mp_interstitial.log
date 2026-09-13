@@ -1,0 +1,2 @@
+2026-09-03 21:57:19 - mpelectroml.utils - INFO - Logging configured. Level: INFO. Output to console and file: full_mp_interstitial.log
+2026-09-03 21:57:19 - __main__ - INFO - Loading cached materials from ./mp_materials.h5
