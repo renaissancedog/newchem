@@ -3,12 +3,14 @@ Read and inspect an HDF5 (.h5) file.
 
 Usage:
     python read_h5.py path/to/file.h5 [--key KEY]
+    python read_h5.py "path/to/shard_glob*.h5" --key KEY --combine [--out combined.h5]
 
 If --key is omitted, the script lists all top-level keys/groups in the file
 so you can see what's available, then tries to load the data with pandas.
 """
 
 import argparse
+import glob
 import sys
 
 import h5py
@@ -54,16 +56,15 @@ def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> p
     Fixed-format ('fixed', the default) HDF5 tables must be loaded in full and
     then sliced afterward.
     """
-    random_array = [16034, 12098, 2731, 12013, 9486, 9356, 12309, 14530, 2962, 5886, 1595, 7901, 7548, 14332, 7734]
-    df = pd.concat([pd.read_hdf(path, key=key, columns=columns, start=i, stop=i + 1) for i in random_array])
-    #df = pd.read_hdf(path, key=key, columns=columns)
-    #df = pd.read_hdf(path, key=key, columns=columns)
-    return df.drop(columns=['data', 'mp_structure'])
+    #random_array = [16034, 12098, 2731, 12013, 9486, 9356, 12309, 14530, 2962, 5886, 1595, 7901, 7548, 14332, 7734]
+    #df = pd.concat([pd.read_hdf(path, key=key, columns=columns, start=i, stop=i + 1) for i in random_array])
+    df = pd.read_hdf(path, key=key, columns=columns)
+    #return df.drop(columns=['data', 'mp_structure'])
     return df.drop(columns=['data', 'mp_structure', 'Li_structure', 'Na_structure', 'host_structure'])
 
 def main():
     parser = argparse.ArgumentParser(description="Read an HDF5 (.h5) file.")
-    parser.add_argument("path", help="Path to the .h5 file")
+    parser.add_argument("path", help="Path to the .h5 file, or a glob pattern when --combine is set")
     parser.add_argument(
         "--key",
         default=None,
@@ -81,7 +82,47 @@ def main():
         default=None,
         help="Only load these specific columns, e.g. --columns col1 col2 col3",
     )
+    parser.add_argument(
+        "--combine",
+        action="store_true",
+        help="Treat 'path' as a glob pattern matching multiple shard files, "
+        "read each with --key/--columns, and concatenate them into one DataFrame.",
+    )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="With --combine, optionally write the combined DataFrame to this HDF5 path "
+        "(uses --key as the write key too).",
+    )
     args = parser.parse_args()
+
+    if args.combine:
+        if args.key is None:
+            print("--combine requires --key", file=sys.stderr)
+            sys.exit(1)
+        matches = sorted(glob.glob(args.path))
+        if not matches:
+            print(f"No files matched glob pattern '{args.path}'", file=sys.stderr)
+            sys.exit(1)
+        print(f"Combining {len(matches)} file(s):")
+        frames = []
+        for m in matches:
+            df = read_with_pandas(m, args.key, columns=args.columns)
+            if "status" in df.columns:
+                before = len(df)
+                df = df[(df["status"].astype(str).str.len() > 0) & (df["status"] != "unprocessed")]
+                print(f"  {m}: {before} rows total, {len(df)} with a real status")
+            else:
+                print(f"  {m}: {len(df)} rows (no 'status' column to filter on)")
+            frames.append(df)
+        combined = pd.concat(frames, ignore_index=True)
+        print(f"\nCombined DataFrame ({len(combined)} rows, status-filtered):")
+        print(combined.shape)
+        print(combined)
+        if args.out:
+            combined.to_hdf(args.out, key=args.key, mode="w")
+            print(f"\nWrote combined DataFrame to {args.out} (key: {args.key})")
+        return
 
     # Always show the structure first — useful for figuring out valid keys.
     try:

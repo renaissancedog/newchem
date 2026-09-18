@@ -36,6 +36,14 @@ from mpelectroml.utils import HDF5_KEY_INTERCALATION
 
 logger = logging.getLogger(__name__)
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="logm result may be inaccurate.*",
+    category=RuntimeWarning,
+)
+
 # Statuses process_structure can return. A row carrying one of these has been fully
 # processed, so a resumed run skips it. Every code path ends in one of these, which is
 # what makes resuming safe: a row is either untouched ("") or finished.
@@ -330,10 +338,14 @@ def intercalate_step(data: list, energies: list, initial_structure_json: str,
         logger.info(f"{dE} {best_dE}")
 
     # Stop if no candidate worked, the cell grew too much, or insertion is unfavourable.
-    if (best_structure is None
-            or cell_growth_exceeded(best_structure, initial_structure, settings.max_cell_growth)
-            or best_dE > 0):
-        logger.info("stopped - failed checks")
+    if best_structure is None:
+        logger.info("stopped - no best struct")
+        return data, energies, previous_N, "intercalated"
+    if cell_growth_exceeded(best_structure, initial_structure, settings.max_cell_growth):
+        logger.info("stopped - cell growth exceeded")
+        return data, energies, previous_N, "intercalated"
+    if best_dE > 0:
+        logger.info(f"stopped - best_dE>0 {best_dE}")
         return data, energies, previous_N, "intercalated"
 
     return (data + [(N, best_structure.to(fmt="json"))],
@@ -444,12 +456,13 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
     else:
         # No native working ion: only pursue hosts where the first insertion is favourable.
         status, first_ion_dE, host_energy, host = screen_first_ion(structure, settings)
+        logger.info(f"first ion check: {first_ion_dE}")
         if (first_ion_dE < settings.first_ion_energy_cutoff):
             logger.info("first ion success")
         else:
             logger.info("first ion fail")
-        #if status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff:
-        if status == "first_ion_checked":
+        if status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff:
+        #if status == "first_ion_checked":
             host_json = host.to(fmt="json")
             # The relaxed host is where intercalation starts, and its energy is already known.
             data, energies = [(0, host_json)], [host_energy]

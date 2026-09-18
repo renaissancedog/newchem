@@ -52,7 +52,7 @@ RESUME = True
 # Optional further bounds applied *within* this shard.
 IDX_INIT = 0
 IDX_FINAL = -1
-CHECKPOINT_EVERY = 5
+CHECKPOINT_EVERY = 1
 
 # Model and relaxation settings for this run. These are deliberately set here rather than
 # relying on library defaults, which are tuned for the insertion-electrode pipeline.
@@ -104,26 +104,40 @@ def run_analysis_workflow():
     # than by where its boundaries happen to fall.
     df = df.sort_values("num_sites").reset_index(drop=True)
     output_filename = OUTPUT_FILENAME
+
+    random_array = [282, 2407, 2777, 3018, 3227, 4404, 4560, 4923, 5044, 5209, 5727, 5790, 6630, 7206,
+                     7432, 7700, 7974, 8252, 8489, 8685, 8795, 8918, 9877, 10003, 10148, 10214, 10872,
+                     11285, 11312, 11358, 11787, 12070, 12577, 12950, 14097, 15887, 16252, 16315, 16462,
+                     16700, 16914, 18153, 18815, 19880, 20136, 20309, 20396, 20497, 20784, 21185, 23170,
+                     23625, 24085, 24509, 24629, 24893, 24931, 25085, 25112, 26416, 26502, 26835, 27565,
+                     27642, 28435, 28440, 28461, 28621, 29020, 29913, 29954, 30037, 31104, 31263, 32178,
+                     32446, 32624, 32642, 33446, 33562, 33814, 34153, 34265, 34349, 34506, 34972, 35751,
+                     35880, 36866, 36982, 37545, 37641, 37672, 37673, 37816, 38181, 38406, 38801, 39467,
+                     39669]
+
     if SHARD_COUNT > 1:
+        shard_indices = [idx // SHARD_COUNT for idx in random_array if idx % SHARD_COUNT == SHARD_RANK]
         df = df.iloc[SHARD_RANK::SHARD_COUNT].reset_index(drop=True)
         output_filename = OUTPUT_FILENAME.replace(".h5", f"_shard{SHARD_RANK}.h5")
-    logger.info(f"shard {SHARD_RANK + 1}/{SHARD_COUNT}: {len(df)} materials -> {output_filename}")
-    random_array = [16034, 12098, 2731, 12013, 9486, 9356, 12309, 14530, 2962, 5886, 1595, 7901, 7548, 14332, 7734]
-    for i in range(len(random_array)):
-        idx = random_array[i]
+    else:
+        shard_indices = [idx for idx in random_array if idx < len(df)]
+
+    logger.info(f"shard {SHARD_RANK + 1}/{SHARD_COUNT}: {len(df)} materials, "
+                f"{len(shard_indices)} target rows -> {output_filename}")
+
+    for idx in shard_indices:
         df = add_intercalation_data_to_df(
             df,
             settings=SETTINGS,
             file_dirpath=FILE_DIRPATH,
             structure_column="mp_structure",
             idx_init=idx,
-            idx_final=idx+1,
+            idx_final=idx + 1,
             checkpoint_every=CHECKPOINT_EVERY,
             output_filename=output_filename,
             resume=RESUME,
         )
     logger.info("Workflow complete.")
-
 
 if __name__ == '__main__':
     setup_logging(level=getattr(logging, LOG_LEVEL), log_file=LOG_FILE_NAME)
