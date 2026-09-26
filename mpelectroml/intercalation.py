@@ -93,7 +93,7 @@ class IntercalationSettings:
     dedup_distance: float = 0.1
     max_cell_growth: float = 0.15
     first_ion_energy_cutoff: float = -1.5
-    fmax: float = 0.02
+    fmax: float = 0.1
     steps: int = 500
     optimizer: str = "fire"
     optimizer_kwargs: dict = field(default_factory=lambda: {
@@ -199,8 +199,9 @@ def screen_first_ion(structure: Structure, settings: IntercalationSettings) -> t
         dE = candidate_energy - base_energy - bulk_energy
         if dE < best_dE:
             best_dE = dE
-        logger.info("dE "+str(best_dE)+str(dE))
+        logger.info("first ion dE "+str(best_dE)+str(dE))
 
+    logger.info("final first ion dE "+str(best_dE))
     status = "first_ion_checked" if candidate_sites else "no_voronoi_sites"
     return status, best_dE, base_energy, relaxed
 
@@ -317,7 +318,7 @@ def intercalate_step(data: list, energies: list, initial_structure_json: str,
     N = previous_N + 1
 
     candidate_sites = _candidate_sites(previous_structure, settings)
-    logger.info(f"{N} {len(candidate_sites)} sites")
+    logger.info(f"N={N} {len(candidate_sites)} sites")
     if not candidate_sites:
         return data, energies, previous_N, "intercalated"
 
@@ -335,7 +336,7 @@ def intercalate_step(data: list, energies: list, initial_structure_json: str,
         dE = candidate_energy - previous_energy - bulk_energy  # cost of inserting this one ion
         if dE < best_dE:
             best_dE, best_energy, best_structure = dE, candidate_energy, relaxed
-        logger.info(f"{dE} {best_dE}")
+        logger.info(f"N={N} {dE} {best_dE}")
 
     # Stop if no candidate worked, the cell grew too much, or insertion is unfavourable.
     if best_structure is None:
@@ -428,6 +429,7 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
         "data": "[]",
         "host_structure": "",
         "host_energy_per_atom": np.nan,
+        f"{ion}_first_dE": np.nan,
         f"{ion}_structure": "",
         f"{ion}_energy_per_atom": np.nan,
         f"{ion}_dE": np.nan,
@@ -457,6 +459,7 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
         # No native working ion: only pursue hosts where the first insertion is favourable.
         status, first_ion_dE, host_energy, host = screen_first_ion(structure, settings)
         logger.info(f"first ion check: {first_ion_dE}")
+        result[f"{ion}_first_dE"]=first_ion_dE
         if (first_ion_dE < settings.first_ion_energy_cutoff):
             logger.info("first ion success")
         else:

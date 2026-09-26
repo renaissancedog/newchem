@@ -56,11 +56,11 @@ def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> p
     Fixed-format ('fixed', the default) HDF5 tables must be loaded in full and
     then sliced afterward.
     """
-    #random_array = [16034, 12098, 2731, 12013, 9486, 9356, 12309, 14530, 2962, 5886, 1595, 7901, 7548, 14332, 7734]
     #df = pd.concat([pd.read_hdf(path, key=key, columns=columns, start=i, stop=i + 1) for i in random_array])
     df = pd.read_hdf(path, key=key, columns=columns)
     #return df.drop(columns=['data', 'mp_structure'])
-    return df.drop(columns=['data', 'mp_structure', 'Li_structure', 'Na_structure', 'host_structure'])
+    #return df.drop(columns=['data', 'mp_structure', 'Li_structure', 'Na_structure', 'host_structure'])
+    return df
 
 def main():
     parser = argparse.ArgumentParser(description="Read an HDF5 (.h5) file.")
