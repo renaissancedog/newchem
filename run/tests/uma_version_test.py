@@ -3,8 +3,9 @@ Compare relaxed energies from two UMA models on materials picked the same way ge
 picks them.
 
 Modeled off intercalation.py: each structure is relaxed with the pipeline's own `_relax`
-helper and `IntercalationSettings`, changing only `model_name`, so the optimizer, steps,
-fmax, device and task_name are identical between the two models.
+helper and `IntercalationSettings`. Only `model_name` and `fmax` differ between the two
+models (fmax can be set per model with --fmaxes); the optimizer, steps, device and
+task_name are identical.
 
 TARGET_INDICES, the sort, and SETTINGS below are copies of what get_data.py uses. If you
 change them in get_data.py, change them here too, or index N will stop meaning the same
@@ -12,11 +13,12 @@ material in both places. Indices are positions in the full sorted frame (before 
 sharding), which is also what get_data.py's shard maths resolves to.
 
 Usage:
-    python compare_uma_models.py --n 3                      # first 3 entries of TARGET_INDICES
-    python compare_uma_models.py --n 5 --random --seed 0    # 5 random entries
-    python compare_uma_models.py --indices 64 73 130        # explicit sorted-frame positions
-    python compare_uma_models.py --materials mp-1062030     # explicit material ids
-    python compare_uma_models.py --n 3 --fmax 0.02          # override a setting
+    python compare_uma_models.py --n 3                          # first 3 entries of TARGET_INDICES
+    python compare_uma_models.py --n 5 --random --seed 0        # 5 random entries
+    python compare_uma_models.py --indices 64 73 130            # explicit sorted-frame positions
+    python compare_uma_models.py --materials mp-1062030         # explicit material ids
+    python compare_uma_models.py --n 3 --fmaxes 0.1 0.02        # fmax 0.1 for model A, 0.02 for model B
+    python compare_uma_models.py --n 3 --fmax 0.02              # same fmax for both models
 
 Run it from the directory get_data.py runs in (so mp_materials.h5 resolves the same way), in
 an environment where `mpelectroml` is importable.
@@ -51,7 +53,7 @@ SETTINGS = IntercalationSettings(
     dedup_distance=0.1,
     max_cell_growth=0.15,
     first_ion_energy_cutoff=-1.5,
-    fmax=0.1,
+    fmax=0.1,                 # default for both models; overridden by --fmax / --fmaxes
     steps=500,
     optimizer="fire",
     optimizer_kwargs={"dt": 0.05, "maxstep": 0.1, "dtmax": 0.2, "downhill_check": False},
@@ -114,14 +116,14 @@ def select_materials(df: pd.DataFrame, args) -> list[tuple]:
 
 
 def relax_with_model(structure: Structure, base_settings: IntercalationSettings,
-                     model_name: str) -> dict:
-    """Relaxes a copy of `structure` with `model_name`; never raises, errors land in the result."""
-    settings = replace(base_settings, model_name=model_name)
+                     model_name: str, fmax: float) -> dict:
+    """Relaxes a copy of `structure` with `model_name` at `fmax`; never raises, errors land in the result."""
+    settings = replace(base_settings, model_name=model_name, fmax=fmax)
     start = time.time()
     try:
         converged, energy, relaxed = _relax(structure.copy(), settings)
     except Exception as e:
-        logger.error(f"{model_name} failed: {type(e).__name__}: {e}")
+        logger.error(f"{model_name} (fmax={fmax}) failed: {type(e).__name__}: {e}")
         return {"converged": False, "energy": np.nan, "energy_per_atom": np.nan,
                 "volume_per_atom": np.nan, "seconds": time.time() - start,
                 "error": f"{type(e).__name__}: {e}"}
@@ -138,15 +140,15 @@ def relax_with_model(structure: Structure, base_settings: IntercalationSettings,
 
 
 def compare(selected: list[tuple], base_settings: IntercalationSettings,
-            model_a: str, model_b: str) -> pd.DataFrame:
+            model_a: str, fmax_a: float, model_b: str, fmax_b: float) -> pd.DataFrame:
     rows = []
     for position, material_id, structure in selected:
         print(f"\nidx {position} / {material_id} ({structure.composition.reduced_formula}, "
               f"{len(structure)} atoms)")
         results = {}
-        for tag, model in (("a", model_a), ("b", model_b)):
-            print(f"  relaxing with {model} ...")
-            r = results[tag] = relax_with_model(structure, base_settings, model)
+        for tag, model, fmax in (("a", model_a, fmax_a), ("b", model_b, fmax_b)):
+            print(f"  relaxing with {model} (fmax={fmax}) ...")
+            r = results[tag] = relax_with_model(structure, base_settings, model, fmax)
             status = "converged" if r["converged"] else "NOT converged"
             print(f"    {status}, E/atom = {r['energy_per_atom']:.6f} eV, {r['seconds']:.1f}s"
                   + (f"  [{r['error']}]" if r["error"] else ""))
@@ -157,6 +159,8 @@ def compare(selected: list[tuple], base_settings: IntercalationSettings,
             "material_id": material_id,
             "formula": structure.composition.reduced_formula,
             "n_atoms": len(structure),
+            f"fmax[{model_a}]": fmax_a,
+            f"fmax[{model_b}]": fmax_b,
             f"E_per_atom[{model_a}]": a["energy_per_atom"],
             f"E_per_atom[{model_b}]": b["energy_per_atom"],
             "dE_per_atom(b-a)": b["energy_per_atom"] - a["energy_per_atom"],
@@ -181,7 +185,7 @@ def main():
 
     pick = parser.add_argument_group("which materials (default: first --n of TARGET_INDICES)")
     pick.add_argument("--n", type=int, default=100,
-                      help="How many entries to take from TARGET_INDICES (default 3)")
+                      help="How many entries to take from TARGET_INDICES (default 100)")
     pick.add_argument("--random", action="store_true", default=True,
                       help="Sample --n entries at random instead of taking the first --n")
     pick.add_argument("--seed", type=int, default=1, help="Seed for --random")
@@ -193,8 +197,14 @@ def main():
     parser.add_argument("--models", nargs=2, default=["uma-s-1p2", "uma-s-1p2p1"],
                         metavar=("MODEL_A", "MODEL_B"))
 
-    over = parser.add_argument_group("overrides for SETTINGS")
-    over.add_argument("--fmax", type=float, default=None)
+    fm = parser.add_argument_group("force convergence (default: SETTINGS.fmax for both models)")
+    fm_excl = fm.add_mutually_exclusive_group()
+    fm_excl.add_argument("--fmaxes", nargs=2, type=float, metavar=("FMAX_A", "FMAX_B"),
+                         help="Separate fmax for MODEL_A and MODEL_B, in the order given to --models")
+    fm_excl.add_argument("--fmax", type=float, default=None,
+                         help="Single fmax applied to both models")
+
+    over = parser.add_argument_group("other overrides for SETTINGS")
     over.add_argument("--steps", type=int, default=None)
     over.add_argument("--device", default=None)
     over.add_argument("--task-name", default=None)
@@ -206,12 +216,25 @@ def main():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-    overrides = {"fmax": args.fmax, "steps": args.steps, "device": args.device,
+    overrides = {"steps": args.steps, "device": args.device,
                  "task_name": args.task_name, "cache_dir": args.cache_dir}
     base_settings = replace(SETTINGS, **{k: v for k, v in overrides.items() if v is not None})
-    print(f"Relaxation settings: fmax={base_settings.fmax}, steps={base_settings.steps}, "
-          f"optimizer={base_settings.optimizer}, device={base_settings.device}, "
-          f"task_name={base_settings.task_name}")
+
+    model_a, model_b = args.models
+    if args.fmaxes:
+        fmax_a, fmax_b = args.fmaxes
+    elif args.fmax is not None:
+        fmax_a = fmax_b = args.fmax
+    else:
+        fmax_a = fmax_b = base_settings.fmax
+
+    print(f"Relaxation settings: steps={base_settings.steps}, optimizer={base_settings.optimizer}, "
+          f"device={base_settings.device}, task_name={base_settings.task_name}")
+    print(f"  {model_a}: fmax={fmax_a}")
+    print(f"  {model_b}: fmax={fmax_b}")
+    if fmax_a != fmax_b:
+        print("Note: fmax differs between models, so dE and dVol include the effect of "
+              "different convergence tolerances, not just the model difference.")
 
     if not os.path.exists(args.materials_file):
         sys.exit(f"Error: {args.materials_file} not found. Run from get_data.py's directory "
@@ -224,8 +247,7 @@ def main():
     if not selected:
         sys.exit("No materials selected; nothing to do.")
 
-    model_a, model_b = args.models
-    table = compare(selected, base_settings, model_a, model_b)
+    table = compare(selected, base_settings, model_a, fmax_a, model_b, fmax_b)
 
     pd.set_option("display.width", None)
     pd.set_option("display.max_columns", None)
@@ -243,6 +265,7 @@ def main():
         print("Not converged under both models (energies not directly comparable): "
               + ", ".join(table.loc[~ok, "material_id"]))
 
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     table.to_csv(args.out, index=False)
     print(f"\nWrote {args.out}")
 

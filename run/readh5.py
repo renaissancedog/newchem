@@ -4,63 +4,107 @@ Read and inspect an HDF5 (.h5) file.
 Usage:
     python read_h5.py path/to/file.h5 [--key KEY]
     python read_h5.py "path/to/shard_glob*.h5" --key KEY --combine [--out combined.h5]
-
-If --key is omitted, the script lists all top-level keys/groups in the file
-so you can see what's available, then tries to load the data with pandas.
 """
 
 import argparse
 import glob
-import sys
+import sys, random, os, json
 
 import h5py
 import numpy as np
 import pandas as pd
 
-# Force pandas to display everything: no row/column truncation, no line wrapping,
-# and no truncation of long cell contents.
 pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", None)
 pd.set_option("display.max_colwidth", None)
-
-# If any cell contains a NumPy array (common for structure/site data), pandas'
-# settings above don't stop *that array's own* repr from truncating - NumPy
-# truncates arrays over ~1000 elements by default regardless of pandas config.
 np.set_printoptions(threshold=sys.maxsize, linewidth=200)
 
 
-def list_h5_contents(path: str) -> list[str]:
-    """Print the structure of an HDF5 file and return all dataset/group paths."""
-    paths = []
-
-    def _visitor(name, obj):
-        kind = "Group" if isinstance(obj, h5py.Group) else "Dataset"
-        shape = getattr(obj, "shape", "")
-        dtype = getattr(obj, "dtype", "")
-        print(f"  {kind:7s} {name}  {shape} {dtype}")
-        paths.append(name)
-
-    with h5py.File(path, "r") as f:
-        print(f"Contents of {path}:")
-        f.visititems(_visitor)
-
-    return paths
-
-
 def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> pd.DataFrame:
-    """Read a specific key from an HDF5 file as a pandas DataFrame.
-
-    If `columns` is given, only those columns are loaded. Note: this only
-    works if the table was written in 'table' format (pd.to_hdf(..., format='table')).
-    Fixed-format ('fixed', the default) HDF5 tables must be loaded in full and
-    then sliced afterward.
-    """
-    #df = pd.concat([pd.read_hdf(path, key=key, columns=columns, start=i, stop=i + 1) for i in random_array])
+    """Read a specific key from an HDF5 file as a pandas DataFrame."""
     df = pd.read_hdf(path, key=key, columns=columns)
-    #return df.drop(columns=['data', 'mp_structure'])
-    #return df.drop(columns=['data', 'mp_structure', 'Li_structure', 'Na_structure', 'host_structure'])
+    #df=df.sort_values(by='material_id')
+    df = df[df["status"] != ""]
+    #df = df[["formula_pretty", "material_id", "status","Li_first_dE"]]
+    #visualize_random_row(df)
+    #df=df.drop(columns=['mp_structure', 'host_structure', 'Na_structure', 'Li_structure', 'data'])
+    print(df.describe())
+    print(list(df.columns))
+    print(df.head(10))
     return df
+
+def reset_to_defaults(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for column in df.columns:
+        if column == "status":
+            df[column] = ""
+        elif column == "N":
+            df[column] = -1
+        elif column == "data":
+            df[column] = "[]"
+        elif column.endswith("_structure") and column != "mp_structure":
+            df[column] = ""
+        elif column == "host_energy_per_atom" or column.endswith("_energy_per_atom") \
+                or column.endswith("_first_dE") or column.endswith("_dE"):
+            df[column] = np.nan
+    return df
+
+def visualize_random_row(df: pd.DataFrame, output_dir: str = "structure_viz",
+                         seed=42) -> list[str]:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from ase.visualize import view
+    from ase.visualize.plot import plot_atoms
+    from pymatgen.core import Structure
+    from pymatgen.io.ase import AseAtomsAdaptor
+
+    random.seed(seed)
+    row = df.sample(n=1).iloc[0]
+    material_id = row.get("material_id", "unknown_material")
+    print(f"Selected row: material_id={material_id}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    saved_paths = []
+
+    def save_structure(structure_json: str, label: str):
+        if not isinstance(structure_json, str) or not structure_json.strip():
+            return
+        try:
+            structure = Structure.from_str(structure_json, fmt="json")
+            atoms = AseAtomsAdaptor.get_atoms(structure)
+        except Exception as e:
+            print(f"  Skipping '{label}': could not parse structure ({type(e).__name__}: {e})")
+            return
+
+        fig, ax = plt.subplots(figsize=(4, 4))
+        plot_atoms(atoms, ax, radii=0.5, rotation="30x,30y,0z")
+        ax.set_title(label, fontsize=9)
+        ax.axis("off")
+        out_path = os.path.join(output_dir, f"{material_id}_{label}.png")
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        saved_paths.append(out_path)
+        print(f"  Saved '{label}' -> {out_path}")
+
+    # The insertion trajectory, if present: a JSON list of [N, structure_json] pairs.
+    data_value = row.get("data")
+    if isinstance(data_value, str) and data_value.strip() not in ("", "[]"):
+        try:
+            trajectory = json.loads(data_value)
+        except Exception as e:
+            print(f"  Could not parse 'data' column: {type(e).__name__}: {e}")
+            trajectory = []
+        for n, structure_json in trajectory:
+            structure = Structure.from_str(structure_json, fmt="json")
+            atoms = AseAtomsAdaptor.get_atoms(structure)
+            view(atoms)
+            #save_structure(structure_json, f"data_N{n}")
+
+    if not saved_paths:
+        print("No parseable structures found in this row.")
+    return saved_paths
 
 def main():
     parser = argparse.ArgumentParser(description="Read an HDF5 (.h5) file.")
@@ -92,9 +136,50 @@ def main():
         "--out",
         default=None,
         help="With --combine, optionally write the combined DataFrame to this HDF5 path "
-        "(uses --key as the write key too).",
+        "(uses --key as the write key too). With --reset, the path to write the reset "
+        "DataFrame to; defaults to overwriting 'path' in place if omitted.",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset every row's status/N/data/structure/energy columns back to their "
+        "unprocessed defaults (see reset_to_defaults()), then write the result. "
+        "Requires --key. Destructive: writes over --out (or 'path' if --out is omitted).",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="With --reset, skip the confirmation prompt before writing.",
     )
     args = parser.parse_args()
+
+    if args.reset:
+        if args.key is None:
+            print("--reset requires --key", file=sys.stderr)
+            sys.exit(1)
+        try:
+            df = pd.read_hdf(args.path, key=args.key)
+        except Exception as e:
+            print(f"\nCould not read key '{args.key}' from '{args.path}': {e}", file=sys.stderr)
+            sys.exit(1)
+
+        reset_df = reset_to_defaults(df)
+        out_path = args.out or args.path
+        print(f"About to reset {len(reset_df)} row(s) in '{args.path}' to unprocessed "
+              f"defaults and write to '{out_path}'.")
+        if not args.yes:
+            confirm = input("Type 'yes' to continue: ")
+            if confirm.strip().lower() != "yes":
+                print("Aborted; nothing was written.")
+                return
+
+        try:
+            reset_df.to_hdf(out_path, key=args.key, mode="w")
+        except Exception as e:
+            print(f"\nCould not write reset DataFrame to '{out_path}': {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Wrote reset DataFrame ({len(reset_df)} rows) to {out_path} (key: {args.key})")
+        return
 
     if args.combine:
         if args.key is None:
@@ -108,28 +193,18 @@ def main():
         frames = []
         for m in matches:
             df = read_with_pandas(m, args.key, columns=args.columns)
-            if "status" in df.columns:
-                before = len(df)
-                df = df[(df["status"].astype(str).str.len() > 0) & (df["status"] != "unprocessed")]
-                print(f"  {m}: {before} rows total, {len(df)} with a real status")
-            else:
-                print(f"  {m}: {len(df)} rows (no 'status' column to filter on)")
+            print(f"  {m}: {len(df)} rows")
             frames.append(df)
         combined = pd.concat(frames, ignore_index=True)
-        print(f"\nCombined DataFrame ({len(combined)} rows, status-filtered):")
+        print(f"\nCombined DataFrame ({len(combined)} rows):")
         print(combined.shape)
-        print(combined)
+        #print(combined)
         if args.out:
             combined.to_hdf(args.out, key=args.key, mode="w")
             print(f"\nWrote combined DataFrame to {args.out} (key: {args.key})")
         return
 
     # Always show the structure first — useful for figuring out valid keys.
-    try:
-        available_keys = list_h5_contents(args.path)
-    except Exception as e:
-        print(f"Could not open '{args.path}' as an HDF5 file: {e}", file=sys.stderr)
-        sys.exit(1)
 
     if args.key is None:
         print("\nNo --key given, so nothing was loaded into a DataFrame.")
@@ -153,11 +228,6 @@ def main():
     except Exception as e:
         print(f"\nCould not read key '{args.key}' with pandas: {e}", file=sys.stderr)
         sys.exit(1)
-
-    print(f"\nLoaded DataFrame from key '{args.key}':")
-    print(df.shape)
-    print(df)
-
 
 if __name__ == "__main__":
     main()
