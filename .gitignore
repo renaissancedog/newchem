@@ -2,4 +2,4 @@
 __pycache__
 MPElectroML.egg-info
 build/
-tatus
+*.log

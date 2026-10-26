@@ -29,7 +29,7 @@ from mpelectroml.utils import get_api_key, setup_logging, HDF5_KEY_INTERCALATION
 # --- Configuration ---
 FILE_DIRPATH = "."
 MATERIALS_HDF5 = "all.h5"          # cached MP query result
-OUTPUT_FILENAME = "fullrun_Li_Na_intercalation_data.h5"
+OUTPUT_FILENAME = "Li_Na_intercalation_data.h5"
 
 # Materials Project query. Fields beyond material_id/structure are stored for later
 # analysis; energy_per_atom in particular cannot be backfilled without re-querying.

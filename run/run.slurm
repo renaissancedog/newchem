@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --job-name=li_extract
-#SBATCH --gres=gpu:a100:3
+#SBATCH --gres=gpu:a100:1
 #SBATCH --output=run.log
-#SBATCH --ntasks=12              # GPUS_PER_NODE * TASKS_PER_GPU
+#SBATCH --ntasks=4              # GPUS_PER_NODE * TASKS_PER_GPU
 #SBATCH --cpus-per-task=1       # adjust to what get_data.py needs
 
-GPUS_PER_NODE=3
+GPUS_PER_NODE=1
 TASKS_PER_GPU=4
 
 pwd

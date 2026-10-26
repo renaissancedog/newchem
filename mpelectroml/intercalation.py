@@ -49,10 +49,7 @@ warnings.filterwarnings(
 # what makes resuming safe: a row is either untouched ("") or finished.
 COMPLETED_STATUSES = frozenset({
     "sodiated", "sodiate_error", "sodiate_not_applicable",
-    "mp_relax_error", "no_voronoi_sites", "no_host", "first_ion_checked", "error",
-    "processing_error",
-    # Retained so that runs written before energies were carried forward still resume.
-    "intercalate_error",
+    "mp_relax_error", "no_voronoi_sites", "no_host", "first_ion_checked", "min_host_error", "processing_error"
 })
 
 
@@ -99,7 +96,7 @@ class IntercalationSettings:
     optimizer_kwargs: dict = field(default_factory=lambda: {
         "dt": 0.05, "maxstep": 0.1, "dtmax": 0.2, "downhill_check": False})
     symmetry_reduce_host_sites: bool = True
-    model_name: str = "uma-s-1p2"
+    model_name: str = "uma-s-1p2p1"
     device: str = "cuda"
     task_name: str = "omat"
     cache_dir: str | None = None
@@ -199,9 +196,9 @@ def screen_first_ion(structure: Structure, settings: IntercalationSettings) -> t
         dE = candidate_energy - base_energy - bulk_energy
         if dE < best_dE:
             best_dE = dE
-        logger.info("first ion dE "+str(best_dE)+str(dE))
+        if best_dE < -1.5:
+            break
 
-    logger.info("final first ion dE "+str(best_dE))
     status = "first_ion_checked" if candidate_sites else "no_voronoi_sites"
     return status, best_dE, base_energy, relaxed
 
@@ -225,7 +222,7 @@ def build_minimal_stable_host(structure: Structure, settings: IntercalationSetti
 
     Returns:
         HostResult: energies, the seed trajectory, ion count and status. Status is
-                    "host_structure_found", "no_host", or "error".
+                    "host_structure_found", "no_host", or "min_host_error".
     """
     ion = settings.working_ion
     bulk_energy = settings.bulk_energies[ion]
@@ -274,7 +271,7 @@ def build_minimal_stable_host(structure: Structure, settings: IntercalationSetti
     # Energy from the host up to the original full composition.
     converged, full_energy, full_relaxed = _relax(structure, settings)
     if not converged:
-        return HostResult(float("inf"), float("inf"), 0, [], [], 0, None, "error")
+        return HostResult(float("inf"), float("inf"), 0, [], [], 0, None, "min_host_error")
 
     # N = ions still missing between the stable host and the full structure.
     N = num_ions - n_added
@@ -465,7 +462,6 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
         else:
             logger.info("first ion fail")
         if status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff:
-        #if status == "first_ion_checked":
             host_json = host.to(fmt="json")
             # The relaxed host is where intercalation starts, and its energy is already known.
             data, energies = [(0, host_json)], [host_energy]
@@ -473,6 +469,10 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
                            "N": 0, "host_structure": host_json})
             status = "host_structure_found"
         result["status"] = status
+
+    # only calculating first insertion energies here, remove once done with this stage
+    if True:
+        return result
 
     if result["status"] == "host_structure_found":
         status = "intercalating"
@@ -587,6 +587,7 @@ def add_intercalation_data_to_df(
         if previous is not None:
             df = previous
             logger.info(f"Resuming from {output_path}.")
+            logger.info(f"DF summary: {df.describe()}.")
 
     ion, new_ion = settings.working_ion, settings.new_working_ion
     text_columns = ["status", "data", "host_structure", f"{ion}_structure", f"{new_ion}_structure"]
@@ -617,7 +618,9 @@ def add_intercalation_data_to_df(
         logger.info(f"Skipping {already_done} row(s) already completed.")
 
     for i in range(idx_init, idx_final):
-        if df.at[i, "status"] in skip_statuses:
+        #if df.at[i, "status"] in skip_statuses:
+        if (df.at[i, "status"] in skip_statuses) or pd.notna(df.at[i, "Li_first_dE"]) or (df.at[i, "status"] != ""):
+            #logger.info(f"skipped {i} first_dE={df.at[i, 'Li_first_dE']} status={df.at[i, 'status']}")
             continue
         logger.info(f"Processing row {i}...")
         try:
