@@ -25,7 +25,7 @@ def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> p
     """Read a specific key from an HDF5 file as a pandas DataFrame."""
     df = pd.read_hdf(path, key=key, columns=columns)
     #df=df.sort_values(by='material_id')
-    df = df[df["Li_first_dE"] <-1.5]
+    #df = df[df["Li_first_dE"] <-1.5]
     #df = df[["formula_pretty", "material_id", "status","Li_first_dE"]]
     #visualize_random_row(df)
     #df=df.drop(columns=['mp_structure', 'host_structure', 'Na_structure', 'Li_structure', 'data'])
