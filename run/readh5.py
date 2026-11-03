@@ -24,14 +24,11 @@ np.set_printoptions(threshold=sys.maxsize, linewidth=200)
 def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> pd.DataFrame:
     """Read a specific key from an HDF5 file as a pandas DataFrame."""
     df = pd.read_hdf(path, key=key, columns=columns)
-    #df=df.sort_values(by='material_id')
-    #df = df[df["Li_first_dE"] <-1.5]
-    #df = df[["formula_pretty", "material_id", "status","Li_first_dE"]]
-    #visualize_random_row(df)
+    df = df[df["Li_first_dE"] <-1.5]
+    df = df[df["status"] == "host_structure_found"]
+    #visualize_row(df)
     #df=df.drop(columns=['mp_structure', 'host_structure', 'Na_structure', 'Li_structure', 'data'])
     print(df.describe())
-    #print(list(df.columns))
-    print(df.head(5))
     return df
 
 def reset_to_defaults(df: pd.DataFrame) -> pd.DataFrame:
@@ -50,8 +47,7 @@ def reset_to_defaults(df: pd.DataFrame) -> pd.DataFrame:
             df[column] = np.nan
     return df
 
-def visualize_random_row(df: pd.DataFrame, output_dir: str = "structure_viz",
-                         seed=42) -> list[str]:
+def visualize_row(df: pd.DataFrame, output_dir: str = "structure_viz", n=0) -> list[str]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -60,8 +56,7 @@ def visualize_random_row(df: pd.DataFrame, output_dir: str = "structure_viz",
     from pymatgen.core import Structure
     from pymatgen.io.ase import AseAtomsAdaptor
 
-    random.seed(seed)
-    row = df.sample(n=1).iloc[0]
+    row = df.iloc[n]
     material_id = row.get("material_id", "unknown_material")
     print(f"Selected row: material_id={material_id}")
 
