@@ -135,8 +135,6 @@ class HostResult(NamedTuple):
     """Outcome of building a minimal stable host. Only `status` is set on failure."""
     status: str
     host_json: str | None = None
-    host_energy: float = float("inf")
-    host_energy_per_atom: float = float("nan")
     N: int = 0                         # ions between the stable host and the full structure
     full_json: str | None = None       # relaxed full structure
     full_energy: float = float("inf")
@@ -216,7 +214,7 @@ def build_minimal_stable_host(structure: Structure, settings: IntercalationSetti
         settings (IntercalationSettings): Run settings.
 
     Returns:
-        HostResult(status, host_json, host_energy, host_energy_per_atom, N, full_json, full_energy)
+        HostResult(status, host_json, N, full_json, full_energy)
     """
     ion = settings.working_ion
 
@@ -267,7 +265,7 @@ def build_minimal_stable_host(structure: Structure, settings: IntercalationSetti
 
     # N = # of ions missing between the stable host and the full structure.
     N = num_ions - n_added
-    return HostResult("host_structure_found", host_json=host.to(fmt="json"), host_energy=host_energy, host_energy_per_atom=host_energy / len(host), N=N, full_json=full_relaxed.to(fmt="json"), full_energy=full_energy)
+    return HostResult("host_structure_found", host_json=host.to(fmt="json"), N=N, full_json=full_relaxed.to(fmt="json"), full_energy=full_energy)
 
 def intercalate_step(data: list, energies: list, initial_structure_json: str,
                      settings: IntercalationSettings) -> tuple:
@@ -334,26 +332,23 @@ def intercalate_step(data: list, energies: list, initial_structure_json: str,
             energies + [best_energy], N, "intercalating")
 
 
-def get_ion_energy(data: list, energies: list, host_json: str, host_energy: float,
-                   settings: IntercalationSettings) -> tuple:
+def get_ion_energy(data: list, host_json: str, settings: IntercalationSettings) -> tuple:
     """
     Energies of the host and the fully intercalated structure.
-
-    Both structures were already relaxed when they were accepted, and their energies are
-    carried here, so this is pure arithmetic. That also keeps each stored energy consistent
-    with the structure stored alongside it.
 
     Returns:
         tuple: (host_energy_per_atom, ion_energy_per_atom, dE).
     """
     N = data[-1][0]
     host = Structure.from_str(host_json, fmt="json")
+    converged, host_energy, _ = _relax(structure, settings)
     full = Structure.from_str(data[-1][1], fmt="json")
-    full_energy = energies[-1]
+    converged, full_energy, _ = _relax(structure, settings)
 
     return (host_energy / len(host),
             full_energy / len(full),
-            full_energy - host_energy - N * settings.bulk_energies[settings.working_ion])
+            full_energy - host_energy - N * settings.bulk_energies[settings.working_ion],
+            host_energy)
 
 
 def swap_working_ion(data: list, host_json: str, host_energy: float,
@@ -389,15 +384,12 @@ def swap_working_ion(data: list, host_json: str, host_energy: float,
     return dE, swapped_energy / len(swapped), relaxed.to(fmt="json"), "sodiated"
 
 
-def process_structure(mp_structure_json: str, settings: IntercalationSettings) -> dict:
+def process_structure(row: str, settings: IntercalationSettings) -> dict:
     """
     Full per-material pipeline: build host, intercalate to saturation, swap the ion.
 
-    Energies are carried forward between stages rather than recomputed, so every stored
-    energy belongs to the structure stored beside it.
-
     Args:
-        mp_structure_json (str): The MP structure as a JSON string.
+        row: The DF row.
         settings (IntercalationSettings): Run settings.
 
     Returns:
@@ -418,45 +410,48 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
         f"{new_ion}_energy_per_atom": np.nan,
         f"{new_ion}_dE": np.nan,
     }
+    result = row
+    status = result["status"]
     import torch
     logger.info("CUDA"+str(torch.cuda.is_available()))
+
+    mp_structure_json=row[structure_column]
     structure = Structure.from_str(mp_structure_json, fmt="json")
     has_ion = ion in {element.symbol for element in structure.composition.elements}
     data = [(0, mp_structure_json)]
     energies = [float("inf")]
-    host_json, host_energy = "", float("inf")
+    host_json = ""
     N = 0
 
     if has_ion:
         # The host with least possible # of ions is determined, so we know how much "extra" ions are in the MP structure, before anything is inserted.
-        host_result = build_minimal_stable_host(structure, settings)
-        status = host_result.status
-        if status == "host_structure_found":
+        #CHANGE THIS BACK AFTER
+        if status != "host_structure_found":
+            continue
+            host_result = build_minimal_stable_host(structure, settings)
+            status = host_result.status
+            energies = [host_result.full_energy]
             # save to results
             N = host_result.N
             data = [(host_result.N, host_result.full_json)]
             host_json = host_result.host_json
-            result.update({"N": N, "host_energy_per_atom": host_result.host_energy_per_atom, "host_structure": host_result.host_json, "data": json.dumps([[n, struct] for n, struct in data])})
+            result.update({"N": N, "host_structure": host_result.host_json, "data": json.dumps([[n, struct] for n, struct in data])})
 
-            # these are used in the intercalation process
-            host_energy = host_result.host_energy
-            energies = [host_result.full_energy]
-
+        if status == "host_structure_found":
             # we begin intercalating from the original MP structure, so we check that structure to see if it's viable
-            full = Structure.from_str(host_result.full_json, fmt="json")
-            status, first_ion_dE, _, _ = screen_first_ion(full, settings)
+            status, first_ion_dE, _, _ = screen_first_ion(structure, settings)
             result[f"{ion}_first_dE"] = first_ion_dE
             if (status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff):
                 status = "first_ion_check_passed"
     else:
-        # for structures without Li, only do the 1st insertion energy check
+        continue
+        # for MP structures that don't contain the ion, only do the 1st insertion energy check
         status, first_ion_dE, host_energy, host = screen_first_ion(structure, settings)
         result[f"{ion}_first_dE"] = first_ion_dE
         if (status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff):
             host_json = host.to(fmt="json")
             data, energies = [(0, host_json)], [host_energy]
-            result.update({"host_energy_per_atom": host_energy / len(host),
-                           "N": N, "host_structure": host_json,
+            result.update({"N": N, "host_structure": host_json,
                            "data": json.dumps([[n, struct] for n, struct in data])})
             status = "first_ion_check_passed"
     result["status"] = status
@@ -475,8 +470,7 @@ def process_structure(mp_structure_json: str, settings: IntercalationSettings) -
                            "data": json.dumps([[n, struct] for n, struct in data])})
 
     if result["status"] == "intercalated":
-        host_energy_per_atom, ion_energy_per_atom, ion_dE = get_ion_energy(
-            data, energies, host_json, host_energy, settings)
+        host_energy_per_atom, ion_energy_per_atom, ion_dE, host_energy = get_ion_energy(data, host_json, settings)
         result.update({"host_energy_per_atom": host_energy_per_atom,
                        f"{ion}_energy_per_atom": ion_energy_per_atom,
                        f"{ion}_dE": ion_dE,
@@ -615,7 +609,7 @@ def add_intercalation_data_to_df(
             continue
         logger.info(f"Processing row {i}...")
         try:
-            result = process_structure(df.at[i, structure_column], settings)
+            result = process_structure(df.iloc[i], settings)
         except Exception as e:
             logger.error(f"Row {i} failed: {type(e).__name__}: {e}")
             result = {"status": "processing_error"}

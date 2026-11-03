@@ -2,12 +2,12 @@
 #SBATCH -J mp_interstitial
 #SBATCH -o logs/%j.log
 #SBATCH --tasks-per-node=12       # 4 tasks per GPU x 3 GPUs
-#SBATCH -p gpu-a100
-#SBATCH -t 47:59:59
+#SBATCH -p gpu-a100-dev
+#SBATCH -t 0:59:59
 #SBATCH -A CHE21006
-#SBATCH -N 6
+#SBATCH -N 1
 
-NODES=6
+NODES=1
 GPUS_PER_NODE=3
 TASKS_PER_GPU=4
 
