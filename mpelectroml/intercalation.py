@@ -415,7 +415,7 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
     import torch
     logger.info("CUDA"+str(torch.cuda.is_available()))
 
-    mp_structure_json=row[structure_column]
+    mp_structure_json=row["mp_structure"]
     structure = Structure.from_str(mp_structure_json, fmt="json")
     has_ion = ion in {element.symbol for element in structure.composition.elements}
     data = [(0, mp_structure_json)]
@@ -427,7 +427,7 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
         # The host with least possible # of ions is determined, so we know how much "extra" ions are in the MP structure, before anything is inserted.
         #CHANGE THIS BACK AFTER
         if status != "host_structure_found":
-            continue
+            return result
             host_result = build_minimal_stable_host(structure, settings)
             status = host_result.status
             energies = [host_result.full_energy]
@@ -444,7 +444,7 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
             if (status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff):
                 status = "first_ion_check_passed"
     else:
-        continue
+        return result
         # for MP structures that don't contain the ion, only do the 1st insertion energy check
         status, first_ion_dE, host_energy, host = screen_first_ion(structure, settings)
         result[f"{ion}_first_dE"] = first_ion_dE
@@ -604,7 +604,7 @@ def add_intercalation_data_to_df(
 
     for i in range(idx_init, idx_final):
         #if df.at[i, "status"] in skip_statuses:
-        if (df.at[i, "status"] in skip_statuses) or pd.notna(df.at[i, "Li_first_dE"]) or (df.at[i, "status"] != ""):
+        if (df.at[i, "status"] in skip_statuses) or pd.notna(df.at[i, "Li_first_dE"]) or (df.at[i, "status"] == "first_ion_checked"):
             #logger.info(f"skipped {i} first_dE={df.at[i, 'Li_first_dE']} status={df.at[i, 'status']}")
             continue
         logger.info(f"Processing row {i}...")

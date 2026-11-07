@@ -3,7 +3,7 @@
 #SBATCH -o logs/%j.log
 #SBATCH --tasks-per-node=12       # 4 tasks per GPU x 3 GPUs
 #SBATCH -p gpu-a100-dev
-#SBATCH -t 0:59:59
+#SBATCH -t 0:15:0
 #SBATCH -A CHE21006
 #SBATCH -N 1
 
