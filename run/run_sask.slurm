@@ -5,6 +5,7 @@
 #SBATCH --output=run.log
 #SBATCH --ntasks=4              # GPUS_PER_NODE * TASKS_PER_GPU
 #SBATCH --cpus-per-task=1       # adjust to what get_data.py needs
+#SBATCH -t 2:29:59
 
 GPUS_PER_NODE=1
 TASKS_PER_GPU=4

@@ -24,11 +24,12 @@ np.set_printoptions(threshold=sys.maxsize, linewidth=200)
 def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> pd.DataFrame:
     """Read a specific key from an HDF5 file as a pandas DataFrame."""
     df = pd.read_hdf(path, key=key, columns=columns)
-    #df = df[df["Li_first_dE"] <-1.5]
+    df = df[df["Li_first_dE"] <-1.5]
+    #df = df[df["status"] == "processing_error"]
     #df = df[np.isnan(df["Li_first_dE"])]
-    df = df[df["formula_pretty"].str.contains("Li")]
+    #df = df[df["formula_pretty"].str.contains("Li")]
     #visualize_row(df)
-    df=df.drop(columns=['mp_structure', 'data', 'host_structure', 'Na_structure', 'Li_structure'])
+    #df=df.drop(columns=['mp_structure', 'data', 'host_structure', 'Na_structure', 'Li_structure'])
     print(df.columns)
     print(df.describe())
     print(df.head(10))

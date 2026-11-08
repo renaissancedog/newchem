@@ -176,7 +176,6 @@ def screen_first_ion(structure: Structure, settings: IntercalationSettings) -> t
         return "mp_relax_error", float("nan"), float("inf"), None
 
     candidate_sites = _candidate_sites(relaxed, settings)
-    logger.info("first ion"+str(len(candidate_sites)))
     best_dE = float("inf")
     for frac in candidate_sites:
         candidate = relaxed.copy()
@@ -331,19 +330,18 @@ def intercalate_step(data: list, energies: list, initial_structure_json: str,
     return (data + [(N, best_structure.to(fmt="json"))],
             energies + [best_energy], N, "intercalating")
 
-
 def get_ion_energy(data: list, host_json: str, settings: IntercalationSettings) -> tuple:
     """
     Energies of the host and the fully intercalated structure.
 
     Returns:
-        tuple: (host_energy_per_atom, ion_energy_per_atom, dE).
+        tuple: (host_energy_per_atom, ion_energy_per_atom, ion_dE, host_energy).
     """
     N = data[-1][0]
     host = Structure.from_str(host_json, fmt="json")
-    converged, host_energy, _ = _relax(structure, settings)
+    converged, host_energy, _ = _relax(host, settings)
     full = Structure.from_str(data[-1][1], fmt="json")
-    converged, full_energy, _ = _relax(structure, settings)
+    converged, full_energy, _ = _relax(full, settings)
 
     return (host_energy / len(host),
             full_energy / len(full),
@@ -410,8 +408,11 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
         f"{new_ion}_energy_per_atom": np.nan,
         f"{new_ion}_dE": np.nan,
     }
-    result = row
+    # temporary code
+    result = row.to_dict()
     status = result["status"]
+    logger.info(row)
+
     import torch
     logger.info("CUDA"+str(torch.cuda.is_available()))
 
@@ -423,11 +424,15 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
     host_json = ""
     N = 0
 
-    if has_ion:
+    data = result["data"]
+    if isinstance(data, str):
+        data = json.loads(data)
+    N=result["N"]
+    host_json = result["host_structure"]
+
+    if False:
         # The host with least possible # of ions is determined, so we know how much "extra" ions are in the MP structure, before anything is inserted.
-        #CHANGE THIS BACK AFTER
         if status != "host_structure_found":
-            return result
             host_result = build_minimal_stable_host(structure, settings)
             status = host_result.status
             energies = [host_result.full_energy]
@@ -443,8 +448,7 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
             result[f"{ion}_first_dE"] = first_ion_dE
             if (status == "first_ion_checked" and first_ion_dE < settings.first_ion_energy_cutoff):
                 status = "first_ion_check_passed"
-    else:
-        return result
+    elif False:
         # for MP structures that don't contain the ion, only do the 1st insertion energy check
         status, first_ion_dE, host_energy, host = screen_first_ion(structure, settings)
         result[f"{ion}_first_dE"] = first_ion_dE
@@ -454,14 +458,16 @@ def process_structure(row: str, settings: IntercalationSettings) -> dict:
             result.update({"N": N, "host_structure": host_json,
                            "data": json.dumps([[n, struct] for n, struct in data])})
             status = "first_ion_check_passed"
-    result["status"] = status
-
-    # only calculating first insertion energies here, remove once done with this stage
-    if True:
+    data = [(0, host_json)]
+    ok, host_energy, _ = _relax(Structure.from_str(data[-1][1], fmt="json"), settings)
+    if not ok:
         return result
+    energies = [host_energy]
+    result["status"] = status
 
     if result["status"] == "first_ion_check_passed":
         status = "intercalating"
+        logger.info("starting intercalation")
         while status == "intercalating":
             data, energies, N, status = intercalate_step(
                 data, energies, mp_structure_json, settings)
@@ -603,15 +609,14 @@ def add_intercalation_data_to_df(
         logger.info(f"Skipping {already_done} row(s) already completed.")
 
     for i in range(idx_init, idx_final):
-        #if df.at[i, "status"] in skip_statuses:
-        if (df.at[i, "status"] in skip_statuses) or pd.notna(df.at[i, "Li_first_dE"]) or (df.at[i, "status"] == "first_ion_checked"):
-            #logger.info(f"skipped {i} first_dE={df.at[i, 'Li_first_dE']} status={df.at[i, 'status']}")
+        if df.at[i, "status"] in skip_statuses:
+            logger.info(f"skipped {i} first_dE={df.at[i, 'Li_first_dE']} status={df.at[i, 'status']}")
             continue
         logger.info(f"Processing row {i}...")
         try:
             result = process_structure(df.iloc[i], settings)
-        except Exception as e:
-            logger.error(f"Row {i} failed: {type(e).__name__}: {e}")
+        except Exception:
+            logger.exception(f"Row {i} failed")
             result = {"status": "processing_error"}
 
         for column, value in result.items():
