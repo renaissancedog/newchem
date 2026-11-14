@@ -24,34 +24,21 @@ np.set_printoptions(threshold=sys.maxsize, linewidth=200)
 def read_with_pandas(path: str, key: str, columns: list[str] | None = None) -> pd.DataFrame:
     """Read a specific key from an HDF5 file as a pandas DataFrame."""
     df = pd.read_hdf(path, key=key, columns=columns)
-    df = df[df["Li_first_dE"] <-1.5]
-    #df = df[df["status"] == "processing_error"]
+    #df = df[df["Li_first_dE"] <-1.5]
+    #df = df[df["status"] == "sodiated"]
     #df = df[np.isnan(df["Li_first_dE"])]
     #df = df[df["formula_pretty"].str.contains("Li")]
-    #visualize_row(df)
+    for i, row in df.iterrows():
+        if i>2:
+            continue
+        visualize_row(row)
     #df=df.drop(columns=['mp_structure', 'data', 'host_structure', 'Na_structure', 'Li_structure'])
     print(df.columns)
     print(df.describe())
-    print(df.head(10))
+    print(df.head(30))
     return df
 
-def reset_to_defaults(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    for column in df.columns:
-        if column == "status":
-            df[column] = ""
-        elif column == "N":
-            df[column] = -1
-        elif column == "data":
-            df[column] = "[]"
-        elif column.endswith("_structure") and column != "mp_structure":
-            df[column] = ""
-        elif column == "host_energy_per_atom" or column.endswith("_energy_per_atom") \
-                or column.endswith("_first_dE") or column.endswith("_dE"):
-            df[column] = np.nan
-    return df
-
-def visualize_row(df: pd.DataFrame, output_dir: str = "structure_viz", n=0) -> list[str]:
+def visualize_row(row, output_dir: str = "visuals") -> list[str]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -59,9 +46,9 @@ def visualize_row(df: pd.DataFrame, output_dir: str = "structure_viz", n=0) -> l
     from ase.visualize.plot import plot_atoms
     from pymatgen.core import Structure
     from pymatgen.io.ase import AseAtomsAdaptor
+    import os
 
-    row = df.iloc[n]
-    material_id = row.get("material_id", "unknown_material")
+    material_id = row["material_id"]
     print(f"Selected row: material_id={material_id}")
 
     os.makedirs(output_dir, exist_ok=True)
@@ -77,18 +64,30 @@ def visualize_row(df: pd.DataFrame, output_dir: str = "structure_viz", n=0) -> l
             print(f"  Skipping '{label}': could not parse structure ({type(e).__name__}: {e})")
             return
 
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{material_id}_{label}.poscar")
+        try:
+            structure.to(filename=out_path, fmt="poscar")
+        except Exception as e:
+            print(f"  Failed to write '{label}': {type(e).__name__}: {e}") 
+
         fig, ax = plt.subplots(figsize=(4, 4))
         plot_atoms(atoms, ax, radii=0.5, rotation="30x,30y,0z")
         ax.set_title(label, fontsize=9)
         ax.axis("off")
         out_path = os.path.join(output_dir, f"{material_id}_{label}.png")
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        #fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
-        saved_paths.append(out_path)
-        print(f"  Saved '{label}' -> {out_path}")
+        #saved_paths.append(out_path)
+        #print(f"  Saved '{label}' -> {out_path}")
 
-    # The insertion trajectory, if present: a JSON list of [N, structure_json] pairs.
-    data_value = row.get("data")
+    host_value = row["host_structure"]
+    try:
+        save_structure(host_value, "data_host")
+    except Exception as e:
+        print(f"  Could not parse 'data' column: {type(e).__name__}: {e}")
+
+    data_value = row["data"]
     if isinstance(data_value, str) and data_value.strip() not in ("", "[]"):
         try:
             trajectory = json.loads(data_value)
@@ -98,11 +97,9 @@ def visualize_row(df: pd.DataFrame, output_dir: str = "structure_viz", n=0) -> l
         for n, structure_json in trajectory:
             structure = Structure.from_str(structure_json, fmt="json")
             atoms = AseAtomsAdaptor.get_atoms(structure)
-            view(atoms)
-            #save_structure(structure_json, f"data_N{n}")
+            #view(atoms)
+            save_structure(structure_json, f"data_N{n}")
 
-    if not saved_paths:
-        print("No parseable structures found in this row.")
     return saved_paths
 
 def main():
@@ -120,12 +117,6 @@ def main():
         help="Just print the column names for --key and exit (no row data).",
     )
     parser.add_argument(
-        "--columns",
-        nargs="+",
-        default=None,
-        help="Only load these specific columns, e.g. --columns col1 col2 col3",
-    )
-    parser.add_argument(
         "--combine",
         action="store_true",
         help="Treat 'path' as a glob pattern matching multiple shard files, "
@@ -138,47 +129,7 @@ def main():
         "(uses --key as the write key too). With --reset, the path to write the reset "
         "DataFrame to; defaults to overwriting 'path' in place if omitted.",
     )
-    parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Reset every row's status/N/data/structure/energy columns back to their "
-        "unprocessed defaults (see reset_to_defaults()), then write the result. "
-        "Requires --key. Destructive: writes over --out (or 'path' if --out is omitted).",
-    )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="With --reset, skip the confirmation prompt before writing.",
-    )
     args = parser.parse_args()
-
-    if args.reset:
-        if args.key is None:
-            print("--reset requires --key", file=sys.stderr)
-            sys.exit(1)
-        try:
-            df = pd.read_hdf(args.path, key=args.key)
-        except Exception as e:
-            print(f"\nCould not read key '{args.key}' from '{args.path}': {e}", file=sys.stderr)
-            sys.exit(1)
-
-        reset_df = reset_to_defaults(df)
-        out_path = args.out or args.path
-        print(f"About to reset {len(reset_df)} row(s) in '{args.path}' to unprocessed "
-              f"defaults and write to '{out_path}'.")
-        if not args.yes:
-            confirm = input("Type 'yes' to continue: ")
-            if confirm.strip().lower() != "yes":
-                print("Aborted; nothing was written.")
-                return
-
-        try:
-            reset_df.to_hdf(out_path, key=args.key, mode="w")
-        except Exception as e:
-            print(f"\nCould not write reset DataFrame to '{out_path}': {e}", file=sys.stderr)
-            sys.exit(1)
-        print(f"Wrote reset DataFrame ({len(reset_df)} rows) to {out_path} (key: {args.key})")
-        return
 
     if args.combine:
         if args.key is None:
@@ -191,7 +142,7 @@ def main():
         print(f"Combining {len(matches)} file(s):")
         frames = []
         for m in matches:
-            df = read_with_pandas(m, args.key, columns=args.columns)
+            df = read_with_pandas(m, args.key)
             print(f"  {m}: {len(df)} rows")
             frames.append(df)
         combined = pd.concat(frames, ignore_index=True)
@@ -203,27 +154,14 @@ def main():
             print(f"\nWrote combined DataFrame to {args.out} (key: {args.key})")
         return
 
-    # Always show the structure first — useful for figuring out valid keys.
-
     if args.key is None:
         print("\nNo --key given, so nothing was loaded into a DataFrame.")
         print("Re-run with --key <one of the names above> to load data, e.g.:")
         print(f"  python read_h5.py {args.path} --key {available_keys[0] if available_keys else '<key>'}")
         return
 
-    if args.list_columns:
-        try:
-            cols = pd.read_hdf(args.path, key=args.key, stop=0).columns
-        except Exception as e:
-            print(f"\nCould not read columns for key '{args.key}': {e}", file=sys.stderr)
-            sys.exit(1)
-        print(f"\nColumns in key '{args.key}' ({len(cols)} total):")
-        for c in cols:
-            print(f"  - {c}")
-        return
-
     try:
-        df = read_with_pandas(args.path, args.key, columns=args.columns)
+        df = read_with_pandas(args.path, args.key)
     except Exception as e:
         print(f"\nCould not read key '{args.key}' with pandas: {e}", file=sys.stderr)
         sys.exit(1)
